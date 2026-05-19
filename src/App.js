@@ -34,58 +34,106 @@ const DEFAULT_EMPLOYEES = [
 ];
 const ADMIN = { id: "admin", name: "Admin", username: "admin", password: "vibex@admin", avatar: "AD", role: "admin" };
 
+// ── ERROR ALERT GLOBAL ─────────────────────────────────────────
+// Ye globally Firebase errors show karega
+let globalErrorSetter = null;
+function showFirebaseError(msg) {
+  console.error("🔥 Firebase Error:", msg);
+  if (globalErrorSetter) globalErrorSetter(msg);
+}
+
 // ── FIREBASE HELPERS ──────────────────────────────────────────
 async function getEmployees() {
   try {
     const snap = await getDoc(doc(db, "config", "employees"));
     return snap.exists() ? snap.data().list : DEFAULT_EMPLOYEES;
-  } catch { return DEFAULT_EMPLOYEES; }
+  } catch (e) {
+    showFirebaseError("getEmployees failed: " + e.message);
+    return DEFAULT_EMPLOYEES;
+  }
 }
 async function saveEmployees(list) {
-  await setDoc(doc(db, "config", "employees"), { list });
+  try {
+    await setDoc(doc(db, "config", "employees"), { list });
+  } catch (e) {
+    showFirebaseError("saveEmployees failed: " + e.message);
+    throw e;
+  }
 }
 async function getRecord(userId, date) {
   try {
     const snap = await getDoc(doc(db, "attendance", `${userId}_${date}`));
     return snap.exists() ? snap.data() : null;
-  } catch { return null; }
+  } catch (e) {
+    showFirebaseError("getRecord failed: " + e.message);
+    return null;
+  }
 }
 async function saveRecord(userId, date, data) {
-  const existing = await getRecord(userId, date) || {};
-  await setDoc(doc(db, "attendance", `${userId}_${date}`), { userId, date, ...existing, ...data }, { merge: true });
+  try {
+    const existing = await getRecord(userId, date) || {};
+    await setDoc(doc(db, "attendance", `${userId}_${date}`), { userId, date, ...existing, ...data }, { merge: true });
+    console.log("✅ Record saved:", userId, date, data);
+  } catch (e) {
+    showFirebaseError("saveRecord failed: " + e.message);
+    throw e;
+  }
 }
 async function deleteRecord(userId, date) {
-  await deleteDoc(doc(db, "attendance", `${userId}_${date}`));
+  try {
+    await deleteDoc(doc(db, "attendance", `${userId}_${date}`));
+  } catch (e) {
+    showFirebaseError("deleteRecord failed: " + e.message);
+    throw e;
+  }
 }
 async function getUserRecords(userId) {
   try {
     const q = query(collection(db, "attendance"), where("userId", "==", userId));
     const snap = await getDocs(q);
     return snap.docs.map(d => d.data()).sort((a, b) => b.date.localeCompare(a.date));
-  } catch { return []; }
+  } catch (e) {
+    showFirebaseError("getUserRecords failed: " + e.message);
+    return [];
+  }
 }
 async function getAllRecords() {
   try {
     const snap = await getDocs(collection(db, "attendance"));
     return snap.docs.map(d => d.data()).sort((a, b) => b.date.localeCompare(a.date));
-  } catch { return []; }
+  } catch (e) {
+    showFirebaseError("getAllRecords failed: " + e.message);
+    return [];
+  }
 }
 async function deleteAllUserRecords(userId) {
-  const q = query(collection(db, "attendance"), where("userId", "==", userId));
-  const snap = await getDocs(q);
-  await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+  try {
+    const q = query(collection(db, "attendance"), where("userId", "==", userId));
+    const snap = await getDocs(q);
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+  } catch (e) {
+    showFirebaseError("deleteAllUserRecords failed: " + e.message);
+    throw e;
+  }
 }
-// Selfie — base64 stored in Firestore (small images only)
 async function getSelfie(userId, date) {
   try {
     const snap = await getDoc(doc(db, "selfies", `${userId}_${date}`));
     return snap.exists() ? snap.data().image : null;
-  } catch { return null; }
+  } catch (e) {
+    showFirebaseError("getSelfie failed: " + e.message);
+    return null;
+  }
 }
 async function saveSelfie(userId, date, b64) {
-  await setDoc(doc(db, "selfies", `${userId}_${date}`), { userId, date, image: b64 });
+  try {
+    await setDoc(doc(db, "selfies", `${userId}_${date}`), { userId, date, image: b64 });
+    console.log("✅ Selfie saved:", userId, date);
+  } catch (e) {
+    showFirebaseError("saveSelfie failed: " + e.message);
+    throw e;
+  }
 }
-// Profile pic — localStorage (device specific, ok for profile)
 function getProfilePic(userId) { return localStorage.getItem(`vx_pic_${userId}`) || null; }
 function saveProfilePic(userId, b64) { localStorage.setItem(`vx_pic_${userId}`, b64); }
 
@@ -141,6 +189,25 @@ function exportCSV(data, filename) {
 const S = { navy: "#0A1628", navyMid: "#0D2147", blue: "#1565C0", blueDark: "#0D47A1", teal: "#26C6A0", red: "#E53935", amber: "#F59E0B", green: "#16A34A", slate: "#64748b", light: "#F0F4FF" };
 const card = { background: "white", borderRadius: "16px", boxShadow: "0 4px 24px rgba(10,22,40,0.08)", overflow: "hidden" };
 const tag = (bg, color) => ({ padding: "4px 12px", borderRadius: "20px", fontSize: "10px", fontWeight: 700, letterSpacing: "1px", background: bg, color });
+
+// ── FIREBASE ERROR BANNER ─────────────────────────────────────
+function FirebaseErrorBanner() {
+  const [error, setError] = useState(null);
+  useEffect(() => { globalErrorSetter = setError; return () => { globalErrorSetter = null; }; }, []);
+  if (!error) return null;
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#B71C1C", color: "white", padding: "14px 24px",
+      fontFamily: "'Montserrat',sans-serif", fontSize: 13, fontWeight: 600,
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.4)"
+    }}>
+      <div>🔥 Firebase Error: <span style={{ fontWeight: 400 }}>{error}</span></div>
+      <button onClick={() => setError(null)} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 700 }}>✕</button>
+    </div>
+  );
+}
 
 // ── LOGO ──────────────────────────────────────────────────────
 function Logo({ size = "md" }) {
@@ -337,6 +404,7 @@ function EmpDashboard({ emp, onLogout }) {
   const [showCamera, setShowCamera] = useState(false), [selfie, setSelfie] = useState(null);
   const [delConfirm, setDelConfirm] = useState(null), [picTick, setPicTick] = useState(0);
   const [viewSelfie, setViewSelfie] = useState(null);
+  const [saving, setSaving] = useState(false);
   const picRef = useRef();
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
@@ -352,16 +420,32 @@ function EmpDashboard({ emp, onLogout }) {
   }, [emp.id]);
 
   async function handleSelfie(b64) {
-    const t = new Date().toISOString();
-    await Promise.all([saveSelfie(emp.id, td, b64), saveRecord(emp.id, td, { inTime: t })]);
-    setSelfie(b64); setInTime(t); setShowCamera(false);
-    setRecords(await getUserRecords(emp.id));
+    setSaving(true);
+    try {
+      const t = new Date().toISOString();
+      await Promise.all([saveSelfie(emp.id, td, b64), saveRecord(emp.id, td, { inTime: t })]);
+      setSelfie(b64); setInTime(t); setShowCamera(false);
+      setRecords(await getUserRecords(emp.id));
+    } catch (e) {
+      // error already shown via showFirebaseError
+    } finally {
+      setSaving(false);
+    }
   }
+
   async function markOut() {
-    const t = new Date().toISOString();
-    await saveRecord(emp.id, td, { outTime: t });
-    setOutTime(t); setRecords(await getUserRecords(emp.id));
+    setSaving(true);
+    try {
+      const t = new Date().toISOString();
+      await saveRecord(emp.id, td, { outTime: t });
+      setOutTime(t); setRecords(await getUserRecords(emp.id));
+    } catch (e) {
+      // error already shown
+    } finally {
+      setSaving(false);
+    }
   }
+
   async function handleDel(date) {
     await deleteRecord(emp.id, date);
     if (date === td) { setInTime(null); setOutTime(null); setSelfie(null); }
@@ -399,94 +483,105 @@ function EmpDashboard({ emp, onLogout }) {
         {loading ? <Loader /> : (
           <>
             {tab === "today" && (
-              <>
-                <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, borderRadius: 16, padding: 32, marginBottom: 24, position: "relative", overflow: "hidden" }}>
-                  <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle,rgba(38,198,160,0.1) 0%,transparent 70%)" }} />
-                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: 3, marginBottom: 8 }}>{now.toLocaleDateString("en-PK", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
-                  <div style={{ color: "white", fontSize: 50, fontWeight: 900, letterSpacing: 4, fontVariantNumeric: "tabular-nums" }}>{now.toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}</div>
-                  <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: S.teal, boxShadow: `0 0 8px ${S.teal}` }} />
-                    <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: 2 }}>OFFICE HOURS: 10:30 AM</span>
+              <div>
+                {/* Clock */}
+                <div style={{ ...card, marginBottom: 20, padding: "28px 32px", background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, textAlign: "center" }}>
+                  <div style={{ fontSize: 48, fontWeight: 900, color: "white", letterSpacing: 4, fontVariantNumeric: "tabular-nums" }}>
+                    {now.toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 8, letterSpacing: 2 }}>
+                    {now.toLocaleDateString("en-PK", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <span style={tag(isLate(new Date().toISOString()) ? "rgba(245,158,11,0.2)" : "rgba(38,198,160,0.2)", isLate(new Date().toISOString()) ? S.amber : S.teal)}>
+                      {isLate(new Date().toISOString()) ? `⏰ LATE — Office time ${OFFICE_START} tha` : `✅ ON TIME`}
+                    </span>
                   </div>
                 </div>
+
+                {/* Selfie Preview */}
+                {selfie && (
+                  <div style={{ ...card, marginBottom: 20, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
+                    <img src={selfie} alt="selfie" style={{ width: 80, height: 80, borderRadius: 12, objectFit: "cover", border: `3px solid ${S.teal}` }} />
+                    <div>
+                      <div style={{ fontWeight: 800, color: S.navy, fontSize: 14 }}>Aaj ki Selfie ✅</div>
+                      <div style={{ color: S.slate, fontSize: 12, marginTop: 4 }}>Mark In: {fmtTime(inTime)}</div>
+                      {outTime && <div style={{ color: S.slate, fontSize: 12 }}>Mark Out: {fmtTime(outTime)}</div>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-                  <div style={{ ...card, borderTop: `4px solid ${S.teal}`, padding: 28 }}>
-                    <div style={{ fontSize: 10, color: "#94A3B8", letterSpacing: 2, marginBottom: 16 }}>CHECK IN</div>
-                    {inTime ? (
-                      <>
-                        <div style={{ fontSize: 26, fontWeight: 900, color: S.navy }}>{fmtTime(inTime)}</div>
-                        <div style={{ marginTop: 8, fontSize: 12, color: isLate(inTime) ? S.red : S.teal, fontWeight: 700 }}>{isLate(inTime) ? `⚠ ${lateMin(inTime)} min late` : "✓ On Time"}</div>
-                        {selfie && <img onClick={() => setViewSelfie(selfie)} src={selfie} alt="" style={{ width: "100%", borderRadius: 10, marginTop: 12, objectFit: "cover", maxHeight: 120, cursor: "pointer" }} />}
-                      </>
-                    ) : (
-                      <>
-                        <div style={{ fontSize: 26, fontWeight: 900, color: "#CBD5E1" }}>--:--</div>
-                        <button onClick={() => setShowCamera(true)} style={{ marginTop: 16, width: "100%", padding: 13, background: `linear-gradient(135deg,${S.teal},#00897B)`, color: "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, letterSpacing: 1, cursor: "pointer", fontFamily: "'Montserrat',sans-serif" }}>📸 SELFIE & CHECK IN</button>
-                      </>
-                    )}
-                  </div>
-                  <div style={{ ...card, borderTop: `4px solid ${S.blue}`, padding: 28 }}>
-                    <div style={{ fontSize: 10, color: "#94A3B8", letterSpacing: 2, marginBottom: 16 }}>CHECK OUT</div>
-                    {outTime ? (
-                      <>
-                        <div style={{ fontSize: 26, fontWeight: 900, color: S.navy }}>{fmtTime(outTime)}</div>
-                        <div style={{ marginTop: 8, fontSize: 12, color: S.blue, fontWeight: 600 }}>Duration: {duration(inTime, outTime)}</div>
-                      </>
-                    ) : (
-                      <>
-                        <div style={{ fontSize: 26, fontWeight: 900, color: "#CBD5E1" }}>--:--</div>
-                        <button onClick={markOut} disabled={!inTime} style={{ marginTop: 16, width: "100%", padding: 13, background: !inTime ? "#E2E8F0" : `linear-gradient(135deg,${S.blue},${S.blueDark})`, color: !inTime ? "#94A3B8" : "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, cursor: !inTime ? "not-allowed" : "pointer", fontFamily: "'Montserrat',sans-serif" }}>MARK OUT ↑</button>
-                      </>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => !inTime && setShowCamera(true)}
+                    disabled={!!inTime || saving}
+                    style={{ padding: "20px 16px", borderRadius: 14, border: "none", background: inTime ? "#F1F5F9" : `linear-gradient(135deg,${S.teal},#00897B)`, color: inTime ? "#94A3B8" : "white", cursor: inTime ? "not-allowed" : "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
+                    {saving ? "SAVING..." : inTime ? `✅ IN — ${fmtTime(inTime)}` : "📸 MARK IN"}
+                  </button>
+                  <button
+                    onClick={() => inTime && !outTime && markOut()}
+                    disabled={!inTime || !!outTime || saving}
+                    style={{ padding: "20px 16px", borderRadius: 14, border: "none", background: !inTime || outTime ? "#F1F5F9" : `linear-gradient(135deg,${S.red},#C62828)`, color: !inTime || outTime ? "#94A3B8" : "white", cursor: (!inTime || outTime) ? "not-allowed" : "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
+                    {saving ? "SAVING..." : outTime ? `🏁 OUT — ${fmtTime(outTime)}` : "🚪 MARK OUT"}
+                  </button>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
-                  {[{ l: "Total Days", v: records.length, c: S.blueDark }, { l: "On Time", v: onTimeCount, c: S.teal }, { l: "Late Days", v: lateCount, c: S.red }].map(s => (
+
+                {/* Stats */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+                  {[{ l: "Total", v: records.length, c: S.blueDark }, { l: "On Time", v: onTimeCount, c: S.teal }, { l: "Late", v: lateCount, c: S.red }].map(s => (
                     <div key={s.l} style={{ ...card, padding: 20, textAlign: "center" }}>
                       <div style={{ fontSize: 32, fontWeight: 900, color: s.c }}>{s.v}</div>
-                      <div style={{ fontSize: 10, color: "#94A3B8", letterSpacing: 1.5, marginTop: 4 }}>{s.l.toUpperCase()}</div>
+                      <div style={{ fontSize: 9, color: "#94A3B8", letterSpacing: 1.5, marginTop: 4 }}>{s.l.toUpperCase()}</div>
                     </div>
                   ))}
                 </div>
-              </>
+              </div>
             )}
+
             {tab === "history" && (
               <div style={card}>
-                <div style={{ padding: "20px 24px", borderBottom: "1px solid #F1F5F9", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-                  <div style={{ fontWeight: 800, color: S.navy, fontSize: 15 }}>Attendance History</div>
-                  <button onClick={() => exportCSV([["Date", "Check In", "Check Out", "Duration", "Status"], ...records.map(r => [fmtDate(r.date), fmtTime(r.inTime), fmtTime(r.outTime), duration(r.inTime, r.outTime), r.inTime ? (isLate(r.inTime) ? "Late" : "On Time") : "Absent"])], `${emp.name}_attendance.csv`)}
-                    style={{ background: `linear-gradient(135deg,${S.blueDark},${S.blue})`, color: "white", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>↓ EXPORT</button>
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr style={{ background: "#F8FAFF" }}>{["Date", "In", "Out", "Duration", "Status", "Selfie", "Del"].map(h => <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: 10, color: S.slate, letterSpacing: 2, fontWeight: 700, borderBottom: "1px solid #F1F5F9" }}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {records.length === 0 ? <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>Koi record nahi</td></tr>
-                        : records.map(r => {
-                          const [s, setS] = [null, () => {}];
-                          return (
-                            <tr key={r.date} style={{ borderBottom: "1px solid #F8FAFF" }}>
+                <div style={{ padding: "20px 24px", borderBottom: "1px solid #F1F5F9", fontWeight: 800, color: S.navy, fontSize: 15 }}>Attendance History</div>
+                {records.length === 0
+                  ? <div style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>Koi record nahi mila</div>
+                  : <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead><tr style={{ background: "#F8FAFF" }}>{["Date", "In", "Out", "Duration", "Status", "Selfie", "Del"].map(h => <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: 10, color: S.slate, letterSpacing: 2, fontWeight: 700 }}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {records.map((r, i) => (
+                            <tr key={i} style={{ borderBottom: "1px solid #F8FAFF" }}>
                               <td style={{ padding: "12px 18px", fontWeight: 700, color: S.navy, fontSize: 13 }}>{fmtDate(r.date)}</td>
                               <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.inTime)}</td>
                               <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.outTime)}</td>
                               <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{duration(r.inTime, r.outTime)}</td>
-                              <td style={{ padding: "12px 18px" }}><span style={tag(!r.inTime ? "#FEF2F2" : isLate(r.inTime) ? "#FEF2F2" : "#F0FDF4", !r.inTime ? S.red : isLate(r.inTime) ? S.red : S.green)}>{!r.inTime ? "ABSENT" : isLate(r.inTime) ? `LATE ${lateMin(r.inTime)}m` : "ON TIME"}</span></td>
-                              <td style={{ padding: "12px 18px" }}><SelfieThumb userId={emp.id} date={r.date} onClick={setViewSelfie} /></td>
-                              <td style={{ padding: "12px 18px" }}><button onClick={() => setDelConfirm(r.date)} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button></td>
+                              <td style={{ padding: "12px 18px" }}><span style={tag(!r.inTime ? "#FEF2F2" : isLate(r.inTime) ? "#FFF7ED" : "#F0FDF4", !r.inTime ? S.red : isLate(r.inTime) ? "#D97706" : S.green)}>{!r.inTime ? "ABSENT" : isLate(r.inTime) ? "LATE" : "ON TIME"}</span></td>
+                              <td style={{ padding: "12px 18px" }}>
+                                <SelfieThumb userId={emp.id} date={r.date} onClick={setViewSelfie} />
+                              </td>
+                              <td style={{ padding: "12px 18px" }}>
+                                <button onClick={() => setDelConfirm(r.date)} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button>
+                              </td>
                             </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                }
               </div>
             )}
+
             {tab === "salary" && (
               <div style={card}>
-                <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, padding: "28px 32px" }}>
-                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, letterSpacing: 3 }}>IS MAAH KI SALARY</div>
-                  <div style={{ color: "white", fontSize: 42, fontWeight: 900, marginTop: 8 }}>Rs. {Math.round(sal.finalSalary).toLocaleString()}</div>
-                  {sal.deduction > 0 && <div style={{ color: "#ef9a9a", fontSize: 13, marginTop: 6 }}>- Rs. {Math.round(sal.deduction).toLocaleString()} deduction</div>}
+                <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, padding: "28px 32px", display: "flex", alignItems: "center", gap: 16 }}>
+                  <Avatar userId={emp.id} fallback={emp.avatar} size={52} key={picTick} />
+                  <div>
+                    <div style={{ color: "white", fontWeight: 800, fontSize: 17 }}>{emp.name}</div>
+                    <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: 2, marginTop: 4 }}>{emp.workingDays} DAYS/MONTH</div>
+                  </div>
+                  <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                    <div style={{ color: S.teal, fontSize: 26, fontWeight: 900 }}>Rs. {Math.round(sal.finalSalary).toLocaleString()}</div>
+                    {sal.deduction > 0 && <div style={{ color: "#ef9a9a", fontSize: 12 }}>-Rs. {Math.round(sal.deduction).toLocaleString()} deduction</div>}
+                  </div>
                 </div>
                 <div style={{ padding: "24px 32px", display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 12 }}>
                   {[{ l: "Monthly Salary", v: `Rs. ${emp.salary.toLocaleString()}`, c: S.blueDark }, { l: "Working Days", v: emp.workingDays, c: S.teal }, { l: "Per Day", v: `Rs. ${Math.round(sal.perDay).toLocaleString()}`, c: S.slate }, { l: "Late Count", v: sal.lateCount, c: S.amber }, { l: "Late Absents", v: sal.lateAbsents, c: S.red }, { l: "Deduction", v: `Rs. ${Math.round(sal.deduction).toLocaleString()}`, c: S.red }].map(s => (
@@ -814,10 +909,17 @@ export default function App() {
     </div>
   );
 
-  if (page === "home") return <Home onLogin={() => setPage("login")} />;
-  if (page === "login") return <Login onSuccess={u => { setUser(u); setPage("dashboard"); }} onBack={() => setPage("home")} ipAllowed={ipAllowed} employees={employees} />;
-  if (page === "dashboard") {
-    if (user?.role === "admin") return <AdminDashboard onLogout={() => { setUser(null); setPage("home"); }} />;
-    return <EmpDashboard emp={user} onLogout={() => { setUser(null); setPage("home"); }} />;
-  }
+  return (
+    <>
+      {/* 🔥 YE BANNER HAR FIREBASE ERROR SCREEN PE DIKHAYEGA */}
+      <FirebaseErrorBanner />
+      {page === "home" && <Home onLogin={() => setPage("login")} />}
+      {page === "login" && <Login onSuccess={u => { setUser(u); setPage("dashboard"); }} onBack={() => setPage("home")} ipAllowed={ipAllowed} employees={employees} />}
+      {page === "dashboard" && (
+        user?.role === "admin"
+          ? <AdminDashboard onLogout={() => { setUser(null); setPage("home"); }} />
+          : <EmpDashboard emp={user} onLogout={() => { setUser(null); setPage("home"); }} />
+      )}
+    </>
+  );
 }
