@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, deleteDoc, query, where } from "firebase/firestore";
+import { createClient } from "@supabase/supabase-js";
 
 // ============================================================
 // ✅ IP RESTRICTION
@@ -8,130 +7,73 @@ const ALLOWED_OFFICE_IP = "119.73.97.135";
 // ============================================================
 
 // ============================================================
-// 🔥 FIREBASE CONFIG
-const firebaseConfig = {
-  apiKey: "AIzaSyAROOm_yjsaMlpt3likunrEtKAuaTrPnBI",
-  authDomain: "vibex-portal.firebaseapp.com",
-  projectId: "vibex-portal",
-  storageBucket: "vibex-portal.firebasestorage.app",
-  messagingSenderId: "986387666263",
-  appId: "1:986387666263:web:d282a009463597b74f1a12"
-};
+// 🗄️ SUPABASE CONFIG
+const SUPABASE_URL = "https://zsynfqmslbsaadgkwhzs.supabase.co";
+const SUPABASE_KEY = "sb_publishable_ZAbqB-oya175Lo-pZG-Xwg_E2WYNBqp";
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ============================================================
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
 
 const OFFICE_START = "10:30";
 const LATE_TO_ABSENT = 3;
 
 const DEFAULT_EMPLOYEES = [
-  { id: "ahmed", name: "Ahmed Ali", username: "ahmed", password: "ahmed123", avatar: "AA", salary: 45000, workingDays: 22 },
-  { id: "sara", name: "Sara Khan", username: "sara", password: "sara123", avatar: "SK", salary: 38000, workingDays: 22 },
-  { id: "usman", name: "Usman Raza", username: "usman", password: "usman123", avatar: "UR", salary: 52000, workingDays: 20 },
-  { id: "fatima", name: "Fatima Noor", username: "fatima", password: "fatima123", avatar: "FN", salary: 41000, workingDays: 12 },
-  { id: "bilal", name: "Bilal Shah", username: "bilal", password: "bilal123", avatar: "BS", salary: 35000, workingDays: 8 },
+  { id: "ahmed", name: "Ahmed Ali", username: "ahmed", password: "ahmed123", avatar: "AA", salary: 45000, working_days: 22 },
+  { id: "sara", name: "Sara Khan", username: "sara", password: "sara123", avatar: "SK", salary: 38000, working_days: 22 },
+  { id: "usman", name: "Usman Raza", username: "usman", password: "usman123", avatar: "UR", salary: 52000, working_days: 20 },
+  { id: "fatima", name: "Fatima Noor", username: "fatima", password: "fatima123", avatar: "FN", salary: 41000, working_days: 12 },
+  { id: "bilal", name: "Bilal Shah", username: "bilal", password: "bilal123", avatar: "BS", salary: 35000, working_days: 8 },
 ];
 const ADMIN = { id: "admin", name: "Admin", username: "admin", password: "vibex@admin", avatar: "AD", role: "admin" };
 
-// ── ERROR ALERT GLOBAL ─────────────────────────────────────────
-// Ye globally Firebase errors show karega
-let globalErrorSetter = null;
-function showFirebaseError(msg) {
-  console.error("🔥 Firebase Error:", msg);
-  if (globalErrorSetter) globalErrorSetter(msg);
-}
-
-// ── FIREBASE HELPERS ──────────────────────────────────────────
+// ── SUPABASE HELPERS ──────────────────────────────────────────
 async function getEmployees() {
-  try {
-    const snap = await getDoc(doc(db, "config", "employees"));
-    return snap.exists() ? snap.data().list : DEFAULT_EMPLOYEES;
-  } catch (e) {
-    showFirebaseError("getEmployees failed: " + e.message);
+  const { data, error } = await sb.from("employees").select("*");
+  if (error || !data || data.length === 0) {
+    // Insert defaults if empty
+    await sb.from("employees").upsert(DEFAULT_EMPLOYEES);
     return DEFAULT_EMPLOYEES;
   }
+  return data;
 }
-async function saveEmployees(list) {
-  try {
-    await setDoc(doc(db, "config", "employees"), { list });
-  } catch (e) {
-    showFirebaseError("saveEmployees failed: " + e.message);
-    throw e;
-  }
+async function saveEmployee(emp) {
+  await sb.from("employees").upsert(emp);
 }
 async function getRecord(userId, date) {
-  try {
-    const snap = await getDoc(doc(db, "attendance", `${userId}_${date}`));
-    return snap.exists() ? snap.data() : null;
-  } catch (e) {
-    showFirebaseError("getRecord failed: " + e.message);
-    return null;
-  }
+  const { data } = await sb.from("attendance").select("*").eq("user_id", userId).eq("date", date).single();
+  return data;
 }
-async function saveRecord(userId, date, data) {
-  try {
-    const existing = await getRecord(userId, date) || {};
-    await setDoc(doc(db, "attendance", `${userId}_${date}`), { userId, date, ...existing, ...data }, { merge: true });
-    console.log("✅ Record saved:", userId, date, data);
-  } catch (e) {
-    showFirebaseError("saveRecord failed: " + e.message);
-    throw e;
+async function saveRecord(userId, date, updates) {
+  const existing = await getRecord(userId, date);
+  if (existing) {
+    await sb.from("attendance").update(updates).eq("user_id", userId).eq("date", date);
+  } else {
+    await sb.from("attendance").insert({ id: `${userId}_${date}`, user_id: userId, date, ...updates });
   }
 }
 async function deleteRecord(userId, date) {
-  try {
-    await deleteDoc(doc(db, "attendance", `${userId}_${date}`));
-  } catch (e) {
-    showFirebaseError("deleteRecord failed: " + e.message);
-    throw e;
-  }
+  await sb.from("attendance").delete().eq("user_id", userId).eq("date", date);
 }
 async function getUserRecords(userId) {
-  try {
-    const q = query(collection(db, "attendance"), where("userId", "==", userId));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => d.data()).sort((a, b) => b.date.localeCompare(a.date));
-  } catch (e) {
-    showFirebaseError("getUserRecords failed: " + e.message);
-    return [];
-  }
+  const { data } = await sb.from("attendance").select("*").eq("user_id", userId).order("date", { ascending: false });
+  return data || [];
 }
-async function getAllRecords() {
-  try {
-    const snap = await getDocs(collection(db, "attendance"));
-    return snap.docs.map(d => d.data()).sort((a, b) => b.date.localeCompare(a.date));
-  } catch (e) {
-    showFirebaseError("getAllRecords failed: " + e.message);
-    return [];
-  }
+async function getAllAttendance() {
+  const { data } = await sb.from("attendance").select("*").order("date", { ascending: false });
+  return data || [];
 }
 async function deleteAllUserRecords(userId) {
-  try {
-    const q = query(collection(db, "attendance"), where("userId", "==", userId));
-    const snap = await getDocs(q);
-    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
-  } catch (e) {
-    showFirebaseError("deleteAllUserRecords failed: " + e.message);
-    throw e;
-  }
+  await sb.from("attendance").delete().eq("user_id", userId);
 }
 async function getSelfie(userId, date) {
-  try {
-    const snap = await getDoc(doc(db, "selfies", `${userId}_${date}`));
-    return snap.exists() ? snap.data().image : null;
-  } catch (e) {
-    showFirebaseError("getSelfie failed: " + e.message);
-    return null;
-  }
+  const { data } = await sb.from("selfies").select("image").eq("user_id", userId).eq("date", date).single();
+  return data?.image || null;
 }
 async function saveSelfie(userId, date, b64) {
-  try {
-    await setDoc(doc(db, "selfies", `${userId}_${date}`), { userId, date, image: b64 });
-    console.log("✅ Selfie saved:", userId, date);
-  } catch (e) {
-    showFirebaseError("saveSelfie failed: " + e.message);
-    throw e;
+  const existing = await getSelfie(userId, date);
+  if (existing) {
+    await sb.from("selfies").update({ image: b64 }).eq("user_id", userId).eq("date", date);
+  } else {
+    await sb.from("selfies").insert({ id: `${userId}_${date}`, user_id: userId, date, image: b64 });
   }
 }
 function getProfilePic(userId) { return localStorage.getItem(`vx_pic_${userId}`) || null; }
@@ -171,10 +113,10 @@ function calcSalary(emp, records, year, month) {
   let lateCount = 0, presentCount = 0;
   dates.forEach(date => {
     const rec = records.find(r => r.date === date);
-    if (rec && rec.inTime) { presentCount++; if (isLate(rec.inTime)) lateCount++; }
+    if (rec && rec.in_time) { presentCount++; if (isLate(rec.in_time)) lateCount++; }
   });
   const lateAbsents = Math.floor(lateCount / LATE_TO_ABSENT);
-  const perDay = emp.salary / emp.workingDays;
+  const perDay = emp.salary / emp.working_days;
   const deduction = lateAbsents * perDay;
   return { lateCount, lateAbsents, presentCount, perDay, deduction, finalSalary: Math.max(0, emp.salary - deduction) };
 }
@@ -189,25 +131,6 @@ function exportCSV(data, filename) {
 const S = { navy: "#0A1628", navyMid: "#0D2147", blue: "#1565C0", blueDark: "#0D47A1", teal: "#26C6A0", red: "#E53935", amber: "#F59E0B", green: "#16A34A", slate: "#64748b", light: "#F0F4FF" };
 const card = { background: "white", borderRadius: "16px", boxShadow: "0 4px 24px rgba(10,22,40,0.08)", overflow: "hidden" };
 const tag = (bg, color) => ({ padding: "4px 12px", borderRadius: "20px", fontSize: "10px", fontWeight: 700, letterSpacing: "1px", background: bg, color });
-
-// ── FIREBASE ERROR BANNER ─────────────────────────────────────
-function FirebaseErrorBanner() {
-  const [error, setError] = useState(null);
-  useEffect(() => { globalErrorSetter = setError; return () => { globalErrorSetter = null; }; }, []);
-  if (!error) return null;
-  return (
-    <div style={{
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
-      background: "#B71C1C", color: "white", padding: "14px 24px",
-      fontFamily: "'Montserrat',sans-serif", fontSize: 13, fontWeight: 600,
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.4)"
-    }}>
-      <div>🔥 Firebase Error: <span style={{ fontWeight: 400 }}>{error}</span></div>
-      <button onClick={() => setError(null)} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 700 }}>✕</button>
-    </div>
-  );
-}
 
 // ── LOGO ──────────────────────────────────────────────────────
 function Logo({ size = "md" }) {
@@ -254,7 +177,7 @@ function SelfieCamera({ onCapture, onCancel }) {
     c.width = v.videoWidth; c.height = v.videoHeight;
     c.getContext("2d").drawImage(v, 0, 0);
     v.srcObject.getTracks().forEach(t => t.stop());
-    onCapture(c.toDataURL("image/jpeg", 0.6));
+    onCapture(c.toDataURL("image/jpeg", 0.5));
   }
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(10,22,40,0.96)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20, padding: 24 }}>
@@ -262,8 +185,8 @@ function SelfieCamera({ onCapture, onCancel }) {
       {error
         ? <div style={{ color: "#ef9a9a", textAlign: "center", fontFamily: "'Montserrat',sans-serif", fontSize: 14, maxWidth: 300 }}>{error}</div>
         : <div style={{ borderRadius: 16, overflow: "hidden", border: `2px solid ${S.teal}` }}>
-            <video ref={videoRef} autoPlay playsInline style={{ width: "min(340px,90vw)", display: "block" }} />
-          </div>
+          <video ref={videoRef} autoPlay playsInline style={{ width: "min(340px,90vw)", display: "block" }} />
+        </div>
       }
       <canvas ref={canvasRef} style={{ display: "none" }} />
       <div style={{ display: "flex", gap: 12 }}>
@@ -395,6 +318,15 @@ function Login({ onSuccess, onBack, ipAllowed, employees }) {
   );
 }
 
+// ── SELFIE THUMB ──────────────────────────────────────────────
+function SelfieThumb({ userId, date, onClick }) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => { getSelfie(userId, date).then(setSrc); }, [userId, date]);
+  return src
+    ? <img onClick={() => onClick(src)} src={src} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", cursor: "pointer", border: `2px solid ${S.teal}` }} />
+    : <span style={{ color: "#CBD5E1", fontSize: 11 }}>--</span>;
+}
+
 // ── EMPLOYEE DASHBOARD ────────────────────────────────────────
 function EmpDashboard({ emp, onLogout }) {
   const td = today();
@@ -403,8 +335,7 @@ function EmpDashboard({ emp, onLogout }) {
   const [records, setRecords] = useState([]), [loading, setLoading] = useState(true);
   const [showCamera, setShowCamera] = useState(false), [selfie, setSelfie] = useState(null);
   const [delConfirm, setDelConfirm] = useState(null), [picTick, setPicTick] = useState(0);
-  const [viewSelfie, setViewSelfie] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [viewSelfie, setViewSelfie] = useState(null), [saving, setSaving] = useState(false);
   const picRef = useRef();
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
@@ -413,7 +344,7 @@ function EmpDashboard({ emp, onLogout }) {
     async function load() {
       setLoading(true);
       const [rec, recs, s] = await Promise.all([getRecord(emp.id, td), getUserRecords(emp.id), getSelfie(emp.id, td)]);
-      if (rec) { setInTime(rec.inTime || null); setOutTime(rec.outTime || null); }
+      if (rec) { setInTime(rec.in_time || null); setOutTime(rec.out_time || null); }
       setRecords(recs); setSelfie(s); setLoading(false);
     }
     load();
@@ -421,29 +352,19 @@ function EmpDashboard({ emp, onLogout }) {
 
   async function handleSelfie(b64) {
     setSaving(true);
-    try {
-      const t = new Date().toISOString();
-      await Promise.all([saveSelfie(emp.id, td, b64), saveRecord(emp.id, td, { inTime: t })]);
-      setSelfie(b64); setInTime(t); setShowCamera(false);
-      setRecords(await getUserRecords(emp.id));
-    } catch (e) {
-      // error already shown via showFirebaseError
-    } finally {
-      setSaving(false);
-    }
+    const t = new Date().toISOString();
+    await Promise.all([saveSelfie(emp.id, td, b64), saveRecord(emp.id, td, { in_time: t })]);
+    setSelfie(b64); setInTime(t); setShowCamera(false);
+    setRecords(await getUserRecords(emp.id));
+    setSaving(false);
   }
 
   async function markOut() {
     setSaving(true);
-    try {
-      const t = new Date().toISOString();
-      await saveRecord(emp.id, td, { outTime: t });
-      setOutTime(t); setRecords(await getUserRecords(emp.id));
-    } catch (e) {
-      // error already shown
-    } finally {
-      setSaving(false);
-    }
+    const t = new Date().toISOString();
+    await saveRecord(emp.id, td, { out_time: t });
+    setOutTime(t); setRecords(await getUserRecords(emp.id));
+    setSaving(false);
   }
 
   async function handleDel(date) {
@@ -452,8 +373,8 @@ function EmpDashboard({ emp, onLogout }) {
     setDelConfirm(null); setRecords(await getUserRecords(emp.id));
   }
 
-  const lateCount = records.filter(r => r.inTime && isLate(r.inTime)).length;
-  const onTimeCount = records.filter(r => r.inTime && !isLate(r.inTime)).length;
+  const lateCount = records.filter(r => r.in_time && isLate(r.in_time)).length;
+  const onTimeCount = records.filter(r => r.in_time && !isLate(r.in_time)).length;
   const now2 = new Date();
   const sal = calcSalary(emp, records, now2.getFullYear(), now2.getMonth() + 1);
 
@@ -483,110 +404,102 @@ function EmpDashboard({ emp, onLogout }) {
         {loading ? <Loader /> : (
           <>
             {tab === "today" && (
-              <div>
-                {/* Clock */}
-                <div style={{ ...card, marginBottom: 20, padding: "28px 32px", background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, textAlign: "center" }}>
-                  <div style={{ fontSize: 48, fontWeight: 900, color: "white", letterSpacing: 4, fontVariantNumeric: "tabular-nums" }}>
-                    {now.toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
-                  </div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 8, letterSpacing: 2 }}>
-                    {now.toLocaleDateString("en-PK", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-                  </div>
-                  <div style={{ marginTop: 12 }}>
-                    <span style={tag(isLate(new Date().toISOString()) ? "rgba(245,158,11,0.2)" : "rgba(38,198,160,0.2)", isLate(new Date().toISOString()) ? S.amber : S.teal)}>
-                      {isLate(new Date().toISOString()) ? `⏰ LATE — Office time ${OFFICE_START} tha` : `✅ ON TIME`}
-                    </span>
+              <>
+                <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, borderRadius: 16, padding: 32, marginBottom: 24, position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle,rgba(38,198,160,0.1) 0%,transparent 70%)" }} />
+                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: 3, marginBottom: 8 }}>{now.toLocaleDateString("en-PK", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
+                  <div style={{ color: "white", fontSize: 50, fontWeight: 900, letterSpacing: 4, fontVariantNumeric: "tabular-nums" }}>{now.toLocaleTimeString("en-PK", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}</div>
+                  <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: S.teal, boxShadow: `0 0 8px ${S.teal}` }} />
+                    <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, letterSpacing: 2 }}>OFFICE HOURS: 10:30 AM</span>
                   </div>
                 </div>
-
-                {/* Selfie Preview */}
-                {selfie && (
-                  <div style={{ ...card, marginBottom: 20, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
-                    <img src={selfie} alt="selfie" style={{ width: 80, height: 80, borderRadius: 12, objectFit: "cover", border: `3px solid ${S.teal}` }} />
-                    <div>
-                      <div style={{ fontWeight: 800, color: S.navy, fontSize: 14 }}>Aaj ki Selfie ✅</div>
-                      <div style={{ color: S.slate, fontSize: 12, marginTop: 4 }}>Mark In: {fmtTime(inTime)}</div>
-                      {outTime && <div style={{ color: S.slate, fontSize: 12 }}>Mark Out: {fmtTime(outTime)}</div>}
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-                  <button
-                    onClick={() => !inTime && setShowCamera(true)}
-                    disabled={!!inTime || saving}
-                    style={{ padding: "20px 16px", borderRadius: 14, border: "none", background: inTime ? "#F1F5F9" : `linear-gradient(135deg,${S.teal},#00897B)`, color: inTime ? "#94A3B8" : "white", cursor: inTime ? "not-allowed" : "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
-                    {saving ? "SAVING..." : inTime ? `✅ IN — ${fmtTime(inTime)}` : "📸 MARK IN"}
-                  </button>
-                  <button
-                    onClick={() => inTime && !outTime && markOut()}
-                    disabled={!inTime || !!outTime || saving}
-                    style={{ padding: "20px 16px", borderRadius: 14, border: "none", background: !inTime || outTime ? "#F1F5F9" : `linear-gradient(135deg,${S.red},#C62828)`, color: !inTime || outTime ? "#94A3B8" : "white", cursor: (!inTime || outTime) ? "not-allowed" : "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 800, fontSize: 13, letterSpacing: 1 }}>
-                    {saving ? "SAVING..." : outTime ? `🏁 OUT — ${fmtTime(outTime)}` : "🚪 MARK OUT"}
-                  </button>
+                  <div style={{ ...card, borderTop: `4px solid ${S.teal}`, padding: 28 }}>
+                    <div style={{ fontSize: 10, color: "#94A3B8", letterSpacing: 2, marginBottom: 16 }}>CHECK IN</div>
+                    {inTime ? (
+                      <>
+                        <div style={{ fontSize: 26, fontWeight: 900, color: S.navy }}>{fmtTime(inTime)}</div>
+                        <div style={{ marginTop: 8, fontSize: 12, color: isLate(inTime) ? S.red : S.teal, fontWeight: 700 }}>{isLate(inTime) ? `⚠ ${lateMin(inTime)} min late` : "✓ On Time"}</div>
+                        {selfie && <img onClick={() => setViewSelfie(selfie)} src={selfie} alt="" style={{ width: "100%", borderRadius: 10, marginTop: 12, objectFit: "cover", maxHeight: 120, cursor: "pointer" }} />}
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 26, fontWeight: 900, color: "#CBD5E1" }}>--:--</div>
+                        <button onClick={() => setShowCamera(true)} disabled={saving} style={{ marginTop: 16, width: "100%", padding: 13, background: saving ? "#E2E8F0" : `linear-gradient(135deg,${S.teal},#00897B)`, color: saving ? "#94A3B8" : "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, letterSpacing: 1, cursor: saving ? "wait" : "pointer", fontFamily: "'Montserrat',sans-serif" }}>
+                          {saving ? "SAVING..." : "📸 SELFIE & CHECK IN"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div style={{ ...card, borderTop: `4px solid ${S.blue}`, padding: 28 }}>
+                    <div style={{ fontSize: 10, color: "#94A3B8", letterSpacing: 2, marginBottom: 16 }}>CHECK OUT</div>
+                    {outTime ? (
+                      <>
+                        <div style={{ fontSize: 26, fontWeight: 900, color: S.navy }}>{fmtTime(outTime)}</div>
+                        <div style={{ marginTop: 8, fontSize: 12, color: S.blue, fontWeight: 600 }}>Duration: {duration(inTime, outTime)}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 26, fontWeight: 900, color: "#CBD5E1" }}>--:--</div>
+                        <button onClick={markOut} disabled={!inTime || saving} style={{ marginTop: 16, width: "100%", padding: 13, background: (!inTime || saving) ? "#E2E8F0" : `linear-gradient(135deg,${S.blue},${S.blueDark})`, color: (!inTime || saving) ? "#94A3B8" : "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 12, cursor: (!inTime || saving) ? "not-allowed" : "pointer", fontFamily: "'Montserrat',sans-serif" }}>
+                          {saving ? "SAVING..." : "MARK OUT ↑"}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
-
-                {/* Stats */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-                  {[{ l: "Total", v: records.length, c: S.blueDark }, { l: "On Time", v: onTimeCount, c: S.teal }, { l: "Late", v: lateCount, c: S.red }].map(s => (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+                  {[{ l: "Total Days", v: records.length, c: S.blueDark }, { l: "On Time", v: onTimeCount, c: S.teal }, { l: "Late Days", v: lateCount, c: S.red }].map(s => (
                     <div key={s.l} style={{ ...card, padding: 20, textAlign: "center" }}>
                       <div style={{ fontSize: 32, fontWeight: 900, color: s.c }}>{s.v}</div>
-                      <div style={{ fontSize: 9, color: "#94A3B8", letterSpacing: 1.5, marginTop: 4 }}>{s.l.toUpperCase()}</div>
+                      <div style={{ fontSize: 10, color: "#94A3B8", letterSpacing: 1.5, marginTop: 4 }}>{s.l.toUpperCase()}</div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </>
             )}
 
             {tab === "history" && (
               <div style={card}>
-                <div style={{ padding: "20px 24px", borderBottom: "1px solid #F1F5F9", fontWeight: 800, color: S.navy, fontSize: 15 }}>Attendance History</div>
-                {records.length === 0
-                  ? <div style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>Koi record nahi mila</div>
-                  : <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead><tr style={{ background: "#F8FAFF" }}>{["Date", "In", "Out", "Duration", "Status", "Selfie", "Del"].map(h => <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: 10, color: S.slate, letterSpacing: 2, fontWeight: 700 }}>{h}</th>)}</tr></thead>
-                        <tbody>
-                          {records.map((r, i) => (
-                            <tr key={i} style={{ borderBottom: "1px solid #F8FAFF" }}>
-                              <td style={{ padding: "12px 18px", fontWeight: 700, color: S.navy, fontSize: 13 }}>{fmtDate(r.date)}</td>
-                              <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.inTime)}</td>
-                              <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.outTime)}</td>
-                              <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{duration(r.inTime, r.outTime)}</td>
-                              <td style={{ padding: "12px 18px" }}><span style={tag(!r.inTime ? "#FEF2F2" : isLate(r.inTime) ? "#FFF7ED" : "#F0FDF4", !r.inTime ? S.red : isLate(r.inTime) ? "#D97706" : S.green)}>{!r.inTime ? "ABSENT" : isLate(r.inTime) ? "LATE" : "ON TIME"}</span></td>
-                              <td style={{ padding: "12px 18px" }}>
-                                <SelfieThumb userId={emp.id} date={r.date} onClick={setViewSelfie} />
-                              </td>
-                              <td style={{ padding: "12px 18px" }}>
-                                <button onClick={() => setDelConfirm(r.date)} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                }
+                <div style={{ padding: "20px 24px", borderBottom: "1px solid #F1F5F9", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                  <div style={{ fontWeight: 800, color: S.navy, fontSize: 15 }}>Attendance History</div>
+                  <button onClick={() => exportCSV([["Date", "Check In", "Check Out", "Duration", "Status"], ...records.map(r => [fmtDate(r.date), fmtTime(r.in_time), fmtTime(r.out_time), duration(r.in_time, r.out_time), r.in_time ? (isLate(r.in_time) ? "Late" : "On Time") : "Absent"])], `${emp.name}_attendance.csv`)}
+                    style={{ background: `linear-gradient(135deg,${S.blueDark},${S.blue})`, color: "white", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>↓ EXPORT</button>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr style={{ background: "#F8FAFF" }}>{["Date", "In", "Out", "Duration", "Status", "Selfie", "Del"].map(h => <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: 10, color: S.slate, letterSpacing: 2, fontWeight: 700, borderBottom: "1px solid #F1F5F9" }}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {records.length === 0 ? <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>Koi record nahi</td></tr>
+                        : records.map(r => (
+                          <tr key={r.date} style={{ borderBottom: "1px solid #F8FAFF" }}>
+                            <td style={{ padding: "12px 18px", fontWeight: 700, color: S.navy, fontSize: 13 }}>{fmtDate(r.date)}</td>
+                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.in_time)}</td>
+                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.out_time)}</td>
+                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{duration(r.in_time, r.out_time)}</td>
+                            <td style={{ padding: "12px 18px" }}><span style={tag(!r.in_time ? "#FEF2F2" : isLate(r.in_time) ? "#FEF2F2" : "#F0FDF4", !r.in_time ? S.red : isLate(r.in_time) ? S.red : S.green)}>{!r.in_time ? "ABSENT" : isLate(r.in_time) ? `LATE ${lateMin(r.in_time)}m` : "ON TIME"}</span></td>
+                            <td style={{ padding: "12px 18px" }}><SelfieThumb userId={emp.id} date={r.date} onClick={setViewSelfie} /></td>
+                            <td style={{ padding: "12px 18px" }}><button onClick={() => setDelConfirm(r.date)} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button></td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
             {tab === "salary" && (
               <div style={card}>
-                <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, padding: "28px 32px", display: "flex", alignItems: "center", gap: 16 }}>
-                  <Avatar userId={emp.id} fallback={emp.avatar} size={52} key={picTick} />
-                  <div>
-                    <div style={{ color: "white", fontWeight: 800, fontSize: 17 }}>{emp.name}</div>
-                    <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: 2, marginTop: 4 }}>{emp.workingDays} DAYS/MONTH</div>
-                  </div>
-                  <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                    <div style={{ color: S.teal, fontSize: 26, fontWeight: 900 }}>Rs. {Math.round(sal.finalSalary).toLocaleString()}</div>
-                    {sal.deduction > 0 && <div style={{ color: "#ef9a9a", fontSize: 12 }}>-Rs. {Math.round(sal.deduction).toLocaleString()} deduction</div>}
-                  </div>
+                <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, padding: "28px 32px" }}>
+                  <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, letterSpacing: 3 }}>IS MAAH KI SALARY</div>
+                  <div style={{ color: "white", fontSize: 42, fontWeight: 900, marginTop: 8 }}>Rs. {Math.round(sal.finalSalary).toLocaleString()}</div>
+                  {sal.deduction > 0 && <div style={{ color: "#ef9a9a", fontSize: 13, marginTop: 6 }}>- Rs. {Math.round(sal.deduction).toLocaleString()} deduction</div>}
                 </div>
                 <div style={{ padding: "24px 32px", display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 12 }}>
-                  {[{ l: "Monthly Salary", v: `Rs. ${emp.salary.toLocaleString()}`, c: S.blueDark }, { l: "Working Days", v: emp.workingDays, c: S.teal }, { l: "Per Day", v: `Rs. ${Math.round(sal.perDay).toLocaleString()}`, c: S.slate }, { l: "Late Count", v: sal.lateCount, c: S.amber }, { l: "Late Absents", v: sal.lateAbsents, c: S.red }, { l: "Deduction", v: `Rs. ${Math.round(sal.deduction).toLocaleString()}`, c: S.red }].map(s => (
+                  {[{ l: "Monthly Salary", v: `Rs. ${emp.salary.toLocaleString()}`, c: S.blueDark }, { l: "Working Days", v: emp.working_days, c: S.teal }, { l: "Per Day", v: `Rs. ${Math.round(sal.perDay).toLocaleString()}`, c: S.slate }, { l: "Late Count", v: sal.lateCount, c: S.amber }, { l: "Late Absents", v: sal.lateAbsents, c: S.red }, { l: "Deduction", v: `Rs. ${Math.round(sal.deduction).toLocaleString()}`, c: S.red }].map(s => (
                     <div key={s.l} style={{ textAlign: "center", padding: 14, background: S.light, borderRadius: 10 }}>
-                      <div style={{ fontSize: 20, fontWeight: 900, color: s.c }}>{s.v}</div>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: s.c }}>{s.v}</div>
                       <div style={{ fontSize: 9, color: "#94A3B8", letterSpacing: 1.5, marginTop: 4 }}>{s.l.toUpperCase()}</div>
                     </div>
                   ))}
@@ -603,15 +516,6 @@ function EmpDashboard({ emp, onLogout }) {
   );
 }
 
-// ── SELFIE THUMB (async load) ─────────────────────────────────
-function SelfieThumb({ userId, date, onClick }) {
-  const [src, setSrc] = useState(null);
-  useEffect(() => { getSelfie(userId, date).then(setSrc); }, [userId, date]);
-  return src
-    ? <img onClick={() => onClick(src)} src={src} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", cursor: "pointer", border: `2px solid ${S.teal}` }} />
-    : <span style={{ color: "#CBD5E1", fontSize: 11 }}>--</span>;
-}
-
 // ── ADMIN DASHBOARD ───────────────────────────────────────────
 function AdminDashboard({ onLogout }) {
   const [tab, setTab] = useState("overview");
@@ -626,24 +530,23 @@ function AdminDashboard({ onLogout }) {
 
   async function loadAll() {
     setLoading(true);
-    const [emps, recs] = await Promise.all([getEmployees(), getAllRecords()]);
+    const [emps, recs] = await Promise.all([getEmployees(), getAllAttendance()]);
     setEmployees(emps); setAllRecs(recs); setLoading(false);
   }
   useEffect(() => { loadAll(); }, []);
 
-  const todayRecs = employees.map(e => ({ ...e, ...(allRecs.find(r => r.userId === e.id && r.date === td) || {}) }));
-  const presentToday = todayRecs.filter(r => r.inTime).length;
-  const lateToday = todayRecs.filter(r => r.inTime && isLate(r.inTime)).length;
+  const todayRecs = employees.map(e => ({ ...e, ...(allRecs.find(r => r.user_id === e.id && r.date === td) || {}) }));
+  const presentToday = todayRecs.filter(r => r.in_time).length;
+  const lateToday = todayRecs.filter(r => r.in_time && isLate(r.in_time)).length;
 
-  let filtered = allRecs.map(r => ({ ...r, empName: employees.find(e => e.id === r.userId)?.name || r.userId, avatar: employees.find(e => e.id === r.userId)?.avatar || "?" }));
-  if (filterUser !== "all") filtered = filtered.filter(r => r.userId === filterUser);
+  let filtered = allRecs.map(r => ({ ...r, empName: employees.find(e => e.id === r.user_id)?.name || r.user_id, avatar: employees.find(e => e.id === r.user_id)?.avatar || "?" }));
+  if (filterUser !== "all") filtered = filtered.filter(r => r.user_id === filterUser);
   if (filterMonth) filtered = filtered.filter(r => r.date.startsWith(filterMonth));
-  if (filterStatus === "late") filtered = filtered.filter(r => r.inTime && isLate(r.inTime));
-  if (filterStatus === "ontime") filtered = filtered.filter(r => r.inTime && !isLate(r.inTime));
+  if (filterStatus === "late") filtered = filtered.filter(r => r.in_time && isLate(r.in_time));
+  if (filterStatus === "ontime") filtered = filtered.filter(r => r.in_time && !isLate(r.in_time));
 
-  async function saveEmp(updated) {
-    const list = employees.map(e => e.id === updated.id ? updated : e);
-    await saveEmployees(list); setEditEmp(null); loadAll();
+  async function handleSaveEmp(updated) {
+    await saveEmployee(updated); setEditEmp(null); loadAll();
   }
 
   const [salYear, salMonthNum] = salMonth.split("-").map(Number);
@@ -658,7 +561,7 @@ function AdminDashboard({ onLogout }) {
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div style={{ background: "white", borderRadius: 18, padding: "36px 32px", maxWidth: 420, width: "100%", boxShadow: "0 24px 80px rgba(0,0,0,0.25)", fontFamily: "'Montserrat',sans-serif" }}>
             <div style={{ fontWeight: 800, color: S.navy, fontSize: 17, marginBottom: 24 }}>✏️ {editEmp.name}</div>
-            {[{ label: "Monthly Salary (Rs)", key: "salary", type: "number" }, { label: "Working Days Per Month", key: "workingDays", type: "number" }, { label: "Password", key: "password", type: "text" }].map(f => (
+            {[{ label: "Monthly Salary (Rs)", key: "salary", type: "number" }, { label: "Working Days Per Month", key: "working_days", type: "number" }, { label: "Password", key: "password", type: "text" }].map(f => (
               <div key={f.key} style={{ marginBottom: 16 }}>
                 <label style={{ fontSize: 11, color: S.slate, letterSpacing: 1.5, display: "block", marginBottom: 6 }}>{f.label.toUpperCase()}</label>
                 <input type={f.type} value={editEmp[f.key]} onChange={e => setEditEmp({ ...editEmp, [f.key]: f.type === "number" ? Number(e.target.value) : e.target.value })}
@@ -667,7 +570,7 @@ function AdminDashboard({ onLogout }) {
             ))}
             <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
               <button onClick={() => setEditEmp(null)} style={{ flex: 1, padding: 12, borderRadius: 8, border: "1px solid #E2E8F0", background: "white", cursor: "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 700, fontSize: 12, color: S.slate }}>CANCEL</button>
-              <button onClick={() => saveEmp(editEmp)} style={{ flex: 1, padding: 12, borderRadius: 8, border: "none", background: `linear-gradient(135deg,${S.blue},${S.blueDark})`, cursor: "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 700, fontSize: 12, color: "white" }}>SAVE</button>
+              <button onClick={() => handleSaveEmp(editEmp)} style={{ flex: 1, padding: 12, borderRadius: 8, border: "none", background: `linear-gradient(135deg,${S.blue},${S.blueDark})`, cursor: "pointer", fontFamily: "'Montserrat',sans-serif", fontWeight: 700, fontSize: 12, color: "white" }}>SAVE</button>
             </div>
           </div>
         </div>
@@ -706,9 +609,9 @@ function AdminDashboard({ onLogout }) {
                       <thead><tr style={{ background: "#F8FAFF" }}>{["Employee", "Total", "On Time", "Late", "Late %", "Actions"].map(h => <th key={h} style={{ padding: "12px 18px", textAlign: "left", fontSize: 10, color: S.slate, letterSpacing: 2, fontWeight: 700, borderBottom: "1px solid #F1F5F9" }}>{h}</th>)}</tr></thead>
                       <tbody>
                         {employees.map(e => {
-                          const recs = allRecs.filter(r => r.userId === e.id);
-                          const late = recs.filter(r => r.inTime && isLate(r.inTime)).length;
-                          const onT = recs.filter(r => r.inTime && !isLate(r.inTime)).length;
+                          const recs = allRecs.filter(r => r.user_id === e.id);
+                          const late = recs.filter(r => r.in_time && isLate(r.in_time)).length;
+                          const onT = recs.filter(r => r.in_time && !isLate(r.in_time)).length;
                           const pct = recs.length ? Math.round((late / recs.length) * 100) : 0;
                           return (
                             <tr key={e.id} style={{ borderBottom: "1px solid #F8FAFF" }}>
@@ -748,13 +651,13 @@ function AdminDashboard({ onLogout }) {
                       {todayRecs.map(r => (
                         <tr key={r.id} style={{ borderBottom: "1px solid #F8FAFF" }}>
                           <td style={{ padding: "12px 18px" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><Avatar userId={r.id} fallback={r.avatar} size={32} /><span style={{ fontWeight: 700, color: S.navy, fontSize: 13 }}>{r.name}</span></div></td>
-                          <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.inTime)}</td>
-                          <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.outTime)}</td>
-                          <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{duration(r.inTime, r.outTime)}</td>
-                          <td style={{ padding: "12px 18px" }}><span style={tag(!r.inTime ? "#FEF2F2" : isLate(r.inTime) ? "#FFF7ED" : "#F0FDF4", !r.inTime ? S.red : isLate(r.inTime) ? "#D97706" : S.green)}>{!r.inTime ? "ABSENT" : isLate(r.inTime) ? "LATE" : "ON TIME"}</span></td>
-                          <td style={{ padding: "12px 18px", color: S.red, fontWeight: 700, fontSize: 13 }}>{r.inTime && isLate(r.inTime) ? `${lateMin(r.inTime)} min` : "-"}</td>
+                          <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.in_time)}</td>
+                          <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{fmtTime(r.out_time)}</td>
+                          <td style={{ padding: "12px 18px", color: "#334155", fontSize: 13 }}>{duration(r.in_time, r.out_time)}</td>
+                          <td style={{ padding: "12px 18px" }}><span style={tag(!r.in_time ? "#FEF2F2" : isLate(r.in_time) ? "#FFF7ED" : "#F0FDF4", !r.in_time ? S.red : isLate(r.in_time) ? "#D97706" : S.green)}>{!r.in_time ? "ABSENT" : isLate(r.in_time) ? "LATE" : "ON TIME"}</span></td>
+                          <td style={{ padding: "12px 18px", color: S.red, fontWeight: 700, fontSize: 13 }}>{r.in_time && isLate(r.in_time) ? `${lateMin(r.in_time)} min` : "-"}</td>
                           <td style={{ padding: "12px 18px" }}><SelfieThumb userId={r.id} date={td} onClick={setViewSelfie} /></td>
-                          <td style={{ padding: "12px 18px" }}>{r.inTime && <button onClick={() => setDelConfirm({ userId: r.id, date: td, name: r.name })} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button>}</td>
+                          <td style={{ padding: "12px 18px" }}>{r.in_time && <button onClick={() => setDelConfirm({ userId: r.id, date: td, name: r.name })} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button>}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -777,7 +680,7 @@ function AdminDashboard({ onLogout }) {
                     <option value="ontime">On Time</option>
                     <option value="late">Late</option>
                   </select>
-                  <button onClick={() => exportCSV([["Employee", "Date", "In", "Out", "Duration", "Status"], ...filtered.map(r => [r.empName, fmtDate(r.date), fmtTime(r.inTime), fmtTime(r.outTime), duration(r.inTime, r.outTime), r.inTime ? (isLate(r.inTime) ? "Late" : "On Time") : "Absent"])], "vibex_records.csv")}
+                  <button onClick={() => exportCSV([["Employee", "Date", "In", "Out", "Duration", "Status"], ...filtered.map(r => [r.empName, fmtDate(r.date), fmtTime(r.in_time), fmtTime(r.out_time), duration(r.in_time, r.out_time), r.in_time ? (isLate(r.in_time) ? "Late" : "On Time") : "Absent"])], "vibex_records.csv")}
                     style={{ background: `linear-gradient(135deg,${S.blueDark},${S.blue})`, color: "white", border: "none", padding: "9px 18px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif", marginLeft: "auto" }}>↓ EXPORT</button>
                 </div>
                 <div style={{ overflowX: "auto" }}>
@@ -787,14 +690,14 @@ function AdminDashboard({ onLogout }) {
                       {filtered.length === 0 ? <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>Koi record nahi</td></tr>
                         : filtered.map((r, i) => (
                           <tr key={i} style={{ borderBottom: "1px solid #F8FAFF" }}>
-                            <td style={{ padding: "12px 18px" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Avatar userId={r.userId} fallback={r.avatar} size={28} /><span style={{ fontWeight: 700, color: S.navy, fontSize: 12 }}>{r.empName}</span></div></td>
+                            <td style={{ padding: "12px 18px" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Avatar userId={r.user_id} fallback={r.avatar} size={28} /><span style={{ fontWeight: 700, color: S.navy, fontSize: 12 }}>{r.empName}</span></div></td>
                             <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{fmtDate(r.date)}</td>
-                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{fmtTime(r.inTime)}</td>
-                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{fmtTime(r.outTime)}</td>
-                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{duration(r.inTime, r.outTime)}</td>
-                            <td style={{ padding: "12px 18px" }}><span style={tag(!r.inTime ? "#FEF2F2" : isLate(r.inTime) ? "#FFF7ED" : "#F0FDF4", !r.inTime ? S.red : isLate(r.inTime) ? "#D97706" : S.green)}>{!r.inTime ? "ABSENT" : isLate(r.inTime) ? "LATE" : "ON TIME"}</span></td>
-                            <td style={{ padding: "12px 18px" }}><SelfieThumb userId={r.userId} date={r.date} onClick={setViewSelfie} /></td>
-                            <td style={{ padding: "12px 18px" }}><button onClick={() => setDelConfirm({ userId: r.userId, date: r.date, name: r.empName })} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button></td>
+                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{fmtTime(r.in_time)}</td>
+                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{fmtTime(r.out_time)}</td>
+                            <td style={{ padding: "12px 18px", color: "#334155", fontSize: 12 }}>{duration(r.in_time, r.out_time)}</td>
+                            <td style={{ padding: "12px 18px" }}><span style={tag(!r.in_time ? "#FEF2F2" : isLate(r.in_time) ? "#FFF7ED" : "#F0FDF4", !r.in_time ? S.red : isLate(r.in_time) ? "#D97706" : S.green)}>{!r.in_time ? "ABSENT" : isLate(r.in_time) ? "LATE" : "ON TIME"}</span></td>
+                            <td style={{ padding: "12px 18px" }}><SelfieThumb userId={r.user_id} date={r.date} onClick={setViewSelfie} /></td>
+                            <td style={{ padding: "12px 18px" }}><button onClick={() => setDelConfirm({ userId: r.user_id, date: r.date, name: r.empName })} style={{ background: "rgba(229,57,53,0.1)", border: "none", color: S.red, padding: "6px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>🗑</button></td>
                           </tr>
                         ))}
                     </tbody>
@@ -810,19 +713,19 @@ function AdminDashboard({ onLogout }) {
                   <input type="month" value={salMonth} onChange={e => setSalMonth(e.target.value)} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E2E8F0", fontFamily: "'Montserrat',sans-serif", fontSize: 13 }} />
                   <button onClick={() => {
                     const rows = [["Employee", "Salary", "Working Days", "Per Day", "Present", "Late", "Absents", "Deduction", "Final"]];
-                    employees.forEach(e => { const recs = allRecs.filter(r => r.userId === e.id); const s = calcSalary(e, recs, salYear, salMonthNum); rows.push([e.name, e.salary, e.workingDays, Math.round(s.perDay), s.presentCount, s.lateCount, s.lateAbsents, Math.round(s.deduction), Math.round(s.finalSalary)]); });
+                    employees.forEach(e => { const recs = allRecs.filter(r => r.user_id === e.id); const s = calcSalary(e, recs, salYear, salMonthNum); rows.push([e.name, e.salary, e.working_days, Math.round(s.perDay), s.presentCount, s.lateCount, s.lateAbsents, Math.round(s.deduction), Math.round(s.finalSalary)]); });
                     exportCSV(rows, `vibex_salary_${salMonth}.csv`);
                   }} style={{ background: `linear-gradient(135deg,${S.teal},#00897B)`, color: "white", border: "none", padding: "10px 20px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "'Montserrat',sans-serif" }}>↓ EXPORT SALARY</button>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(300px,1fr))", gap: 16 }}>
                   {employees.map(e => {
-                    const recs = allRecs.filter(r => r.userId === e.id);
+                    const recs = allRecs.filter(r => r.user_id === e.id);
                     const s = calcSalary(e, recs, salYear, salMonthNum);
                     return (
                       <div key={e.id} style={card}>
                         <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, padding: "20px 24px", display: "flex", alignItems: "center", gap: 14 }}>
                           <Avatar userId={e.id} fallback={e.avatar} size={44} />
-                          <div><div style={{ color: "white", fontWeight: 800, fontSize: 15 }}>{e.name}</div><div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: 2 }}>{e.workingDays} DAYS/MONTH</div></div>
+                          <div><div style={{ color: "white", fontWeight: 800, fontSize: 15 }}>{e.name}</div><div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: 2 }}>{e.working_days} DAYS/MONTH</div></div>
                           <div style={{ marginLeft: "auto", textAlign: "right" }}>
                             <div style={{ color: S.teal, fontSize: 20, fontWeight: 900 }}>Rs. {Math.round(s.finalSalary).toLocaleString()}</div>
                             {s.deduction > 0 && <div style={{ color: "#ef9a9a", fontSize: 11 }}>-Rs. {Math.round(s.deduction).toLocaleString()}</div>}
@@ -837,7 +740,7 @@ function AdminDashboard({ onLogout }) {
                               </div>
                             ))}
                           </div>
-                          <div style={{ background: S.light, borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between" }}><span style={{ fontSize: 12, color: S.slate }}>Base</span><span style={{ fontWeight: 700, color: S.navy }}>Rs. {e.salary.toLocaleString()}</span></div>
+                          <div style={{ background: S.light, borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between" }}><span style={{ fontSize: 12, color: S.slate }}>Base Salary</span><span style={{ fontWeight: 700, color: S.navy }}>Rs. {e.salary.toLocaleString()}</span></div>
                           {s.deduction > 0 && <div style={{ background: "#FEF2F2", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", marginTop: 8 }}><span style={{ fontSize: 12, color: S.red }}>Deduction</span><span style={{ fontWeight: 700, color: S.red }}>-Rs. {Math.round(s.deduction).toLocaleString()}</span></div>}
                           <div style={{ background: "#F0FDF4", borderRadius: 8, padding: "12px 14px", display: "flex", justifyContent: "space-between", marginTop: 8, border: "1px solid rgba(22,163,74,0.2)" }}><span style={{ fontSize: 13, color: S.green, fontWeight: 700 }}>Final Salary</span><span style={{ fontWeight: 900, color: S.green, fontSize: 16 }}>Rs. {Math.round(s.finalSalary).toLocaleString()}</span></div>
                         </div>
@@ -851,9 +754,9 @@ function AdminDashboard({ onLogout }) {
             {tab === "employees" && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 16 }}>
                 {employees.map(e => {
-                  const recs = allRecs.filter(r => r.userId === e.id);
-                  const late = recs.filter(r => r.inTime && isLate(r.inTime)).length;
-                  const onT = recs.filter(r => r.inTime && !isLate(r.inTime)).length;
+                  const recs = allRecs.filter(r => r.user_id === e.id);
+                  const late = recs.filter(r => r.in_time && isLate(r.in_time)).length;
+                  const onT = recs.filter(r => r.in_time && !isLate(r.in_time)).length;
                   return (
                     <div key={e.id} style={card}>
                       <div style={{ background: `linear-gradient(135deg,${S.navy},${S.navyMid})`, padding: 28, textAlign: "center" }}>
@@ -909,17 +812,10 @@ export default function App() {
     </div>
   );
 
-  return (
-    <>
-      {/* 🔥 YE BANNER HAR FIREBASE ERROR SCREEN PE DIKHAYEGA */}
-      <FirebaseErrorBanner />
-      {page === "home" && <Home onLogin={() => setPage("login")} />}
-      {page === "login" && <Login onSuccess={u => { setUser(u); setPage("dashboard"); }} onBack={() => setPage("home")} ipAllowed={ipAllowed} employees={employees} />}
-      {page === "dashboard" && (
-        user?.role === "admin"
-          ? <AdminDashboard onLogout={() => { setUser(null); setPage("home"); }} />
-          : <EmpDashboard emp={user} onLogout={() => { setUser(null); setPage("home"); }} />
-      )}
-    </>
-  );
+  if (page === "home") return <Home onLogin={() => setPage("login")} />;
+  if (page === "login") return <Login onSuccess={u => { setUser(u); setPage("dashboard"); }} onBack={() => setPage("home")} ipAllowed={ipAllowed} employees={employees} />;
+  if (page === "dashboard") {
+    if (user?.role === "admin") return <AdminDashboard onLogout={() => { setUser(null); setPage("home"); }} />;
+    return <EmpDashboard emp={user} onLogout={() => { setUser(null); setPage("home"); }} />;
+  }
 }
