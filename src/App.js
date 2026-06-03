@@ -313,7 +313,7 @@ function Home({ onLogin }) {
           ))}
         </div>
       </div>
-      <div style={{ textAlign: "center", padding: 20, borderTop: "1px solid rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.2)", fontSize: 11, letterSpacing: 2 }}>© 2025 VIBEX DIGITAL</div>
+      <div style={{ textAlign: "center", padding: 20, borderTop: "1px solid rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.2)", fontSize: 11, letterSpacing: 2 }}> DEVELOP BY HASNAIN RAZA © 2026 VIBEX DIGITAL</div>
     </div>
   );
 }
